@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Payment System</title>
+    <style>
+        body {
+            font-family: Arial;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+        .container {
+            max-width: 500px;
+            margin: 0 auto;
+            background: white;
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+        input, select, button {
+            width: 100%;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 10px;
+            border: 2px solid #e0e0e0;
+            font-size: 16px;
+            box-sizing: border-box;
+        }
+        button {
+            background: #667eea;
+            color: white;
+            border: none;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        button:hover {
+            background: #5a67d8;
+            transform: translateY(-2px);
+        }
+        .tab {
+            display: flex;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #e0e0e0;
+        }
+        .tab button {
+            flex: 1;
+            background: none;
+            color: #666;
+            border-radius: 0;
+            border-bottom: 3px solid transparent;
+        }
+        .tab button.active {
+            color: #667eea;
+            border-bottom-color: #667eea;
+        }
+        .content {
+            display: none;
+        }
+        .content.active {
+            display: block;
+            animation: fadeIn 0.3s;
+        }
+        .result {
+            background: #f7fafc;
+            padding: 20px;
+            border-radius: 10px;
+            margin: 20px 0;
+            border-left: 4px solid #667eea;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .loading {
+            text-align: center;
+            padding: 20px;
+        }
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 style="text-align: center; color: #667eea;">💰 Payment System</h1>
+        
+        <div class="tab">
+            <button class="active" onclick="switchTab('deposit')">Deposit</button>
+            <button onclick="switchTab('withdrawal')">Withdrawal</button>
+        </div>
+        
+        <!-- Депозит -->
+        <div id="depositTab" class="content active">
+            <h3>Make Deposit</h3>
+            <input type="text" id="account" placeholder="Your game account" required>
+            <input type="number" id="amount" placeholder="Amount (min: 100)" min="100" required>
+            <input type="text" id="wallet" placeholder="Your wallet number" required>
+            
+            <select id="method">
+                <option value="">Select payment method</option>
+            </select>
+            
+            <button onclick="processDeposit()" id="depositBtn">Get Deposit Wallet</button>
+            
+            <div id="depositResult" class="result" style="display: none;">
+                <h3>📱 Send Payment</h3>
+                <p><b>Amount:</b> <span id="displayAmount">0</span> <span id="currency">EGP</span></p>
+                <p><b>Send to:</b></p>
+                <div style="background: white; padding: 15px; border-radius: 8px; margin: 10px 0; border: 2px dashed #667eea;">
+                    <span id="depositWallet" style="font-size: 18px; font-weight: bold;"></span>
+                </div>
+                <small style="color: #666;">This wallet is valid for 15 minutes</small>
+                <div style="margin-top: 20px;">
+                    <button onclick="copyWallet()" style="background: #48bb78;">📋 Copy Wallet</button>
+                    <button onclick="confirmPayment()" style="background: #38a169; margin-top: 10px;">✅ I Have Sent Payment</button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Вывод -->
+        <div id="withdrawalTab" class="content">
+            <h3>Make Withdrawal</h3>
+            <input type="text" id="withdrawAccount" placeholder="Your game account" required>
+            <input type="number" id="withdrawAmount" placeholder="Amount (min: 300)" min="300" required>
+            <input type="text" id="withdrawWallet" placeholder="Your wallet number" required>
+            <input type="text" id="withdrawCode" placeholder="Withdrawal code" required>
+            <button onclick="processWithdrawal()" style="background: #ed8936;">Request Withdrawal</button>
+            
+            <div id="withdrawalResult" class="result" style="display: none;"></div>
+        </div>
+    </div>
+
+    <script>
+        // ==== НАСТРОЙКИ ====
+        // ЗАМЕНИТЕ ЭТОТ URL на ваш из Google Apps Script
+        const API_URL = 'https://script.google.com/macros/s/AKfycbxbQoGDjvsGgr2esuqCBRAeWLuD99XPe9h2dFc-g7Rl5luOth4_LKq08caex6bg4bQ/exec';
+        
+        // ==== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ====
+        let currentDeposit = null;
+        let appConfig = null;
+        
+        // ==== ИНИЦИАЛИЗАЦИЯ ====
+        document.addEventListener('DOMContentLoaded', async function() {
+            await loadConfig();
+            await loadWallets();
+            
+            // Автозаполнение аккаунта
+            const savedAccount = localStorage.getItem('payment_account');
+            if (savedAccount) {
+                document.getElementById('account').value = savedAccount;
+                document.getElementById('withdrawAccount').value = savedAccount;
+            }
+        });
+        
+        // ==== ЗАГРУЗКА КОНФИГА ====
+        async function loadConfig() {
+            try {
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        action: 'get_config'
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.status === 'success') {
+                    appConfig = result.config;
+                    
+                    // Обновляем интерфейс
+                    document.getElementById('amount').min = appConfig.minDeposit;
+                    document.getElementById('withdrawAmount').min = appConfig.minWithdrawal;
+                    document.getElementById('currency').textContent = appConfig.currency;
+                }
+            } catch (error) {
+                console.error('Failed to load config:', error);
+                // Значения по умолчанию
+                appConfig = {
+                    minDeposit: 100,
+                    minWithdrawal: 300,
+                    currency: 'EGP'
+                };
+            }
+        }
+        
+        // ==== ЗАГРУЗКА КОШЕЛЬКОВ ====
+        async function loadWallets() {
+            try {
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        action: 'get_wallets'
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.status === 'success' && result.wallets) {
+                    const select = document.getElementById('method');
+                    select.innerHTML = '<option value="">Select payment method</option>';
+                    
+                    for (const [key, wallet] of Object.entries(result.wallets)) {
+                        if (wallet.enabled) {
+                            const option = document.createElement('option');
+                            option.value = key;
+                            option.textContent = wallet.name;
+                            select.appendChild(option);
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error('Failed to load wallets:', error);
+            }
+        }
+        
+        // ==== ПЕРЕКЛЮЧЕНИЕ ВКЛАДОК ====
+        function switchTab(tabName) {
+            // Обновляем активную кнопку
+            document.querySelectorAll('.tab button').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            event.target.classList.add('active');
+            
+            // Показываем активный контент
+            document.querySelectorAll('.content').forEach(content => {
+                content.classList.remove('active');
+            });
+            document.getElementById(tabName + 'Tab').classList.add('active');
+        }
+        
+        // ==== ДЕПОЗИТ ====
+        async function processDeposit() {
+            const account = document.getElementById('account').value.trim();
+            const amount = document.getElementById('amount').value;
+            const wallet = document.getElementById('wallet').value.trim();
+            const method = document.getElementById('method').value;
+            
+            // Проверка
+            if (!account || !amount || !wallet || !method) {
+                alert('Please fill all fields');
+                return;
+            }
+            
+            if (amount < (appConfig?.minDeposit || 100)) {
+                alert(`Minimum deposit is ${appConfig?.minDeposit || 100}`);
+                return;
+            }
+            
+            // Сохраняем аккаунт
+            localStorage.setItem('payment_account', account);
+            
+            // Показываем загрузку
+            const btn = document.getElementById('depositBtn');
+            btn.disabled = true;
+            btn.innerHTML = '<div class="spinner"></div>';
+            
+            try {
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        action: 'check_deposit',
+                        account: account,
+                        amount: amount,
+                        wallet: wallet,
+                        type: method
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.status === 'success') {
+                    // Сохраняем данные
+                    currentDeposit = {
+                        account: account,
+                        amount: amount,
+                        wallet: wallet,
+                        type: method,
+                        depositWallet: result.wallet,
+                        isFirstDeposit: result.isFirstDeposit
+                    };
+                    
+                    // Показываем результат
+                    document.getElementById('displayAmount').textContent = amount;
+                    document.getElementById('depositWallet').textContent = result.wallet;
+                    document.getElementById('depositResult').style.display = 'block';
+                    
+                    // Предупреждение для первого депозита
+                    if (result.isFirstDeposit) {
+                        alert('⚠️ This is your first deposit. Please wait for confirmation.');
+                    }
+                    
+                } else {
+                    alert('Error: ' + result.message);
+                }
+                
+            } catch (error) {
+                alert('Network error. Please try again.');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Get Deposit Wallet';
+            }
+        }
+        
+        // ==== ПОДТВЕРЖДЕНИЕ ПЛАТЕЖА ====
+        async function confirmPayment() {
+            if (!currentDeposit) return;
+            
+            try {
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        action: 'confirm_deposit',
+                        account: currentDeposit.account,
+                        amount: currentDeposit.amount,
+                        depositWallet: currentDeposit.depositWallet
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.status === 'success') {
+                    alert('✅ Payment confirmed! Funds will be added to your account.');
+                    
+                    // Очистка формы
+                    document.getElementById('amount').value = '';
+                    document.getElementById('wallet').value = '';
+                    document.getElementById('depositResult').style.display = 'none';
+                    
+                    currentDeposit = null;
+                } else {
+                    alert('Error: ' + result.message);
+                }
+                
+            } catch (error) {
+                alert('Confirmation failed. Try again.');
+            }
+        }
+        
+        // ==== ВЫВОД ====
+        async function processWithdrawal() {
+            const account = document.getElementById('withdrawAccount').value.trim();
+            const amount = document.getElementById('withdrawAmount').value;
+            const wallet = document.getElementById('withdrawWallet').value.trim();
+            const code = document.getElementById('withdrawCode').value.trim();
+            
+            if (!account || !amount || !wallet || !code) {
+                alert('Please fill all fields');
+                return;
+            }
+            
+            if (amount < (appConfig?.minWithdrawal || 300)) {
+                alert(`Minimum withdrawal is ${appConfig?.minWithdrawal || 300}`);
+                return;
+            }
+            
+            // Сохраняем аккаунт
+            localStorage.setItem('payment_account', account);
+            
+            try {
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        action: 'check_withdrawal',
+                        account: account,
+                        amount: amount,
+                        wallet: wallet,
+                        code: code
+                    })
+                });
+                
+                const result = await response.json();
+                
+                const resultDiv = document.getElementById('withdrawalResult');
+                resultDiv.style.display = 'block';
+                
+                if (result.status === 'success') {
+                    resultDiv.innerHTML = `
+                        <h3 style="color: #38a169;">✅ Request Accepted</h3>
+                        <p>${result.message}</p>
+                        <p><small>Processing time: 1-3 hours</small></p>
+                    `;
+                    
+                    // Очистка формы
+                    document.getElementById('withdrawAmount').value = '';
+                    document.getElementById('withdrawWallet').value = '';
+                    document.getElementById('withdrawCode').value = '';
+                    
+                } else {
+                    resultDiv.innerHTML = `
+                        <h3 style="color: #e53e3e;">❌ Error</h3>
+                        <p>${result.message}</p>
+                    `;
+                }
+                
+            } catch (error) {
+                alert('Network error. Please try again.');
+            }
+        }
+        
+        // ==== ВСПОМОГАТЕЛЬНЫЕ ====
+        function copyWallet() {
+            const wallet = document.getElementById('depositWallet').textContent;
+            navigator.clipboard.writeText(wallet);
+            alert('Wallet number copied to clipboard!');
+        }
+    </script>
+</body>
+</html>
